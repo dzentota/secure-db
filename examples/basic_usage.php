@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../vendor/autoload.php';
 
 use SecureDb\Db;
+use SecureDb\MacroControl;
 
 // Example 1: Basic Connection and Queries
 echo "=== Basic Usage Example ===\n";
@@ -228,6 +229,47 @@ $typedUserId = $db->insert('users', [
 ]);
 
 echo "Created typed user with ID: $typedUserId\n";
+
+// Example 10: Macro Substitution (Conditional SQL Blocks)
+echo "\n=== Macro Substitution Example ===\n";
+
+// Conditional query with included block
+$includeActiveFilter = true;
+$users = $db->select(
+    'SELECT * FROM users WHERE id > ? { AND active = ? } ORDER BY id',
+    1,
+    $includeActiveFilter ? 1 : MacroControl::SKIP
+);
+echo "Users with active filter: " . count($users) . "\n";
+
+// Conditional query with skipped block
+$includeActiveFilter = false;
+$allUsers = $db->select(
+    'SELECT * FROM users WHERE id > ? { AND active = ? } ORDER BY id',
+    1,
+    $includeActiveFilter ? 1 : MacroControl::SKIP
+);
+echo "Users without active filter: " . count($allUsers) . "\n";
+
+// Multiple conditional blocks
+$includeNameFilter = true;
+$includeAgeFilter = false;
+$filteredUsers = $db->select(
+    'SELECT * FROM users WHERE 1=1 { AND name LIKE ? } { AND age > ? } ORDER BY id',
+    $includeNameFilter ? '%o%' : MacroControl::SKIP,
+    $includeAgeFilter ? 25 : MacroControl::SKIP
+);
+echo "Users with selective filters: " . count($filteredUsers) . "\n";
+
+// Conditional blocks with array placeholders
+$includeIdFilter = true;
+$userIds = [1, 2, 3];
+$specificUsers = $db->select(
+    'SELECT * FROM users WHERE active = ? { AND id IN(?a) } ORDER BY id',
+    1,
+    $includeIdFilter ? $userIds : MacroControl::SKIP
+);
+echo "Users with conditional ID filter: " . count($specificUsers) . "\n";
 
 // Final count
 $finalCount = $db->selectCell('SELECT COUNT(*) FROM users');

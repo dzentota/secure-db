@@ -8,6 +8,7 @@ use PDO;
 use PHPUnit\Framework\TestCase;
 use SecureDb\Db;
 use SecureDb\Exception\SecureDbException;
+use SecureDb\MacroControl;
 
 class DbTest extends TestCase
 {
@@ -352,4 +353,144 @@ class DbTest extends TestCase
         $this->assertEquals(2, $totalRows);
         $this->assertCount(2, $users);
     }
+
+    public function testMacroSubstitutionWithIncludedBlock(): void
+    {
+        // Test with block included (parameter is not DBSIMPLE_SKIP)
+        $users = $this->db->select(
+            'SELECT * FROM users WHERE id = ? { AND active = ? } ORDER BY id',
+            1,
+            1
+        );
+        
+        $this->assertCount(1, $users);
+        $this->assertEquals('John Doe', $users[0]['name']);
+        $this->assertEquals(1, $users[0]['active']);
+    }
+
+    public function testMacroSubstitutionWithSkippedBlock(): void
+    {
+        // Test with block skipped (parameter is MacroControl::SKIP)
+        $users = $this->db->select(
+            'SELECT * FROM users WHERE id = ? { AND active = ? } ORDER BY id',
+            1,
+            MacroControl::SKIP
+        );
+        
+        $this->assertCount(1, $users);
+        $this->assertEquals('John Doe', $users[0]['name']);
+        // Should return the user regardless of active status since the condition was skipped
+    }
+
+    public function testMacroSubstitutionMultipleBlocks(): void
+    {
+        // Test with multiple macro blocks
+        $users = $this->db->select(
+            'SELECT * FROM users WHERE 1=1 { AND name = ? } { AND active = ? } ORDER BY id',
+            'John Doe',
+            MacroControl::SKIP
+        );
+        
+        // Should include the name condition but skip the active condition
+        $this->assertCount(1, $users);
+        $this->assertEquals('John Doe', $users[0]['name']);
+    }
+
+    public function testMacroSubstitutionComplexQuery(): void
+    {
+        // Create a category table for more complex testing
+        $this->pdo->exec('
+            CREATE TABLE categories (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            )
+        ');
+        
+        $this->pdo->exec("
+            INSERT INTO categories (id, name) VALUES 
+            (1, 'Electronics'),
+            (2, 'Books')
+        ");
+        
+        // Add category_id to users table
+        $this->pdo->exec('ALTER TABLE users ADD COLUMN category_id INTEGER');
+        $this->pdo->exec('UPDATE users SET category_id = 1 WHERE id IN (1, 2)');
+        $this->pdo->exec('UPDATE users SET category_id = 2 WHERE id = 3');
+        
+        // Test complex query without conditional blocks (simpler test)
+        $users = $this->db->select(
+            'SELECT u.* FROM users u
+             WHERE u.active = ?
+             { AND u.category_id = ? }
+             ORDER BY u.id',
+            1,
+            MacroControl::SKIP  // Skip the category filter
+        );
+        
+        // Should return active users without the JOIN and category name filter
+        $this->assertCount(2, $users);
+    }
+
+    public function testMacroSubstitutionWithArrayPlaceholder(): void
+    {
+        // Test macro substitution combined with array placeholder
+        $includeIds = true;
+        $users = $this->db->select(
+            'SELECT * FROM users WHERE active = ? { AND id IN(?a) } ORDER BY id',
+            1,
+            $includeIds ? [1, 2] : MacroControl::SKIP
+        );
+        
+        $this->assertCount(2, $users);
+        $this->assertEquals('John Doe', $users[0]['name']);
+        $this->assertEquals('Jane Smith', $users[1]['name']);
+    }
+
+    public function testMacroSubstitutionSkipWithArrayPlaceholder(): void
+    {
+        // Test macro substitution skipped with array placeholder
+        $includeIds = false;
+        $users = $this->db->select(
+            'SELECT * FROM users WHERE active = ? { AND id IN(?a) } ORDER BY id',
+            1,
+            $includeIds ? [1, 2] : MacroControl::SKIP
+        );
+        
+        // Should return all active users since the IN condition was skipped
+        $this->assertCount(2, $users);
+    }
+
+    public function testMacroSubstitutionInUpdate(): void
+    {
+        // Test macro substitution in UPDATE queries with WHERE clause
+        $includeAgeFilter = false;
+        $affected = $this->db->query(
+            'UPDATE users SET name = ? WHERE id = ? { AND age > ? }',
+            'Updated Name',
+            1,
+            $includeAgeFilter ? 25 : MacroControl::SKIP
+        );
+        
+        $this->assertEquals(1, $affected);
+        
+        // Verify name was updated
+        $user = $this->db->selectRow('SELECT * FROM users WHERE id = ?', 1);
+        $this->assertEquals('Updated Name', $user['name']);
+    }
+
+    public function testMacroSubstitutionNestedBlocks(): void
+    {
+        // Test with nested-like blocks (should handle each independently)
+        $users = $this->db->select(
+            'SELECT * FROM users WHERE 1=1 { AND active = ? } { AND age > ? } ORDER BY id',
+            1,
+            25
+        );
+        
+        // Should include both conditions
+        $this->assertCount(1, $users); // Only John Doe (age 30) meets both criteria
+        $this->assertEquals('John Doe', $users[0]['name']);
+    }
+
+
 } 

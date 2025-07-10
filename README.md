@@ -25,7 +25,7 @@ A secure-by-default PDO wrapper that prevents SQL injection vulnerabilities and 
 ## Installation
 
 ```bash
-composer require secure-db/secure-pdo-wrapper
+composer require dzentota/secure-db
 ```
 
 ## Quick Start
@@ -168,6 +168,53 @@ $users = $db->select('SELECT * FROM ?_users WHERE ?_users.active = ?', 1);
 // Generates: SELECT * FROM `app_users` WHERE `app_users`.`active` = ?
 ```
 
+### Macro Substitution (Conditional SQL Blocks)
+
+Build dynamic queries with conditional SQL blocks using `MacroControl::SKIP`:
+
+```php
+use SecureDb\MacroControl;
+
+// Conditional WHERE clause
+$includeActiveFilter = true;
+$users = $db->select(
+    'SELECT * FROM users WHERE id > ? { AND active = ? } ORDER BY id',
+    1,
+    $includeActiveFilter ? 1 : MacroControl::SKIP
+);
+// With filter: SELECT * FROM users WHERE id > ? AND active = ? ORDER BY id
+// Without filter: SELECT * FROM users WHERE id > ? ORDER BY id
+
+// Multiple conditional blocks
+$includeNameFilter = true;
+$includeAgeFilter = false;
+$users = $db->select(
+    'SELECT * FROM users WHERE 1=1 { AND name LIKE ? } { AND age > ? }',
+    $includeNameFilter ? 'John%' : MacroControl::SKIP,
+    $includeAgeFilter ? 25 : MacroControl::SKIP
+);
+// Generates: SELECT * FROM users WHERE 1=1 AND name LIKE ?
+
+// Works with array placeholders
+$includeIdFilter = true;
+$users = $db->select(
+    'SELECT * FROM users WHERE active = ? { AND id IN(?a) }',
+    1,
+    $includeIdFilter ? [1, 2, 3] : MacroControl::SKIP
+);
+// Generates: SELECT * FROM users WHERE active = ? AND id IN(?, ?, ?)
+
+// Conditional UPDATE clauses
+$updateAge = false;
+$affected = $db->query(
+    'UPDATE users SET name = ? { , age = ? } WHERE id = ?',
+    'John Doe',
+    $updateAge ? 30 : MacroControl::SKIP,
+    123
+);
+// Generates: UPDATE users SET name = ? WHERE id = ?
+```
+
 ### Error Handling and Logging
 
 ```php
@@ -213,9 +260,11 @@ $userId = $db->insert('users', [
 |----------|-------------------|---------|
 | MySQL | Backticks (`) | ✅ Full Support |
 | PostgreSQL | Double quotes (") | ✅ Full Support |
-| SQLite | Brackets ([]) | ✅ Full Support |
+| SQLite | Smart quoting* | ✅ Full Support |
 | SQL Server | Brackets ([]) | ✅ Basic Support |
 | Oracle | Double quotes (") | ✅ Basic Support |
+
+\* SQLite uses intelligent identifier quoting - simple identifiers are left unquoted for maximum compatibility, while complex identifiers use double quotes when needed.
 
 ## Security Features
 
@@ -296,7 +345,7 @@ composer phpstan
 
 ```bash
 git clone https://github.com/dzentota/secure-db.git
-cd secure-pdo-wrapper
+cd secure-db
 composer install
 composer test
 ```
@@ -316,9 +365,15 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Security
 
-If you discover any security vulnerabilities, please send an email to security@secure-db.com instead of using the issue tracker.
+If you discover any security vulnerabilities, please send an email to webtota@gmail.com instead of using the issue tracker.
 
 ## Changelog
+
+### 1.1.0
+- Added macro substitution for conditional SQL blocks using `{ }` syntax
+- Improved SQLite identifier quoting with smart detection
+- Enhanced placeholder processing to handle mixed placeholder types correctly
+- Added comprehensive macro substitution examples
 
 ### 1.0.0
 - Initial release
