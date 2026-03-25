@@ -21,6 +21,7 @@ class Db
     private mixed $errorHandler = null;
     private mixed $logger = null;
     private bool $strictMode = true;
+    private bool $logQueryParams = false;
 
     /**
      * Create a new Db instance
@@ -45,7 +46,7 @@ class Db
             $driverName = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
             return new self($pdo, $driverName);
         } catch (PDOException $e) {
-            throw new SecureDbException('Database connection failed: ' . $e->getMessage(), (int)$e->getCode(), $e);
+            throw new SecureDbException('Database connection failed', (int)$e->getCode(), $e);
         }
     }
 
@@ -74,11 +75,22 @@ class Db
     }
 
     /**
-     * Set strict mode (throws exceptions vs returns false)
+     * Set strict mode (throws exceptions vs returns safe defaults)
      */
     public function setStrictMode(bool $strict): void
     {
         $this->strictMode = $strict;
+    }
+
+    /**
+     * Enable or disable logging of query parameters.
+     * Disabled by default to prevent sensitive data (passwords, tokens, PII) from appearing in logs.
+     * Note: custom error handlers registered via setErrorHandler() always receive the full parameter
+     * list regardless of this setting — the caller is responsible for handling that data safely.
+     */
+    public function setLogQueryParams(bool $log): void
+    {
+        $this->logQueryParams = $log;
     }
 
     /**
@@ -103,7 +115,7 @@ class Db
     public function select(string $query, ...$params): array
     {
         $stmt = $this->executeQuery($query, $params);
-        return $stmt->fetchAll();
+        return $stmt !== null ? $stmt->fetchAll() : [];
     }
 
     /**
@@ -112,6 +124,9 @@ class Db
     public function selectRow(string $query, ...$params): ?array
     {
         $stmt = $this->executeQuery($query, $params);
+        if ($stmt === null) {
+            return null;
+        }
         $result = $stmt->fetch();
         return $result === false ? null : $result;
     }
@@ -122,7 +137,7 @@ class Db
     public function selectCol(string $query, ...$params): array
     {
         $stmt = $this->executeQuery($query, $params);
-        return $stmt->fetchAll(PDO::FETCH_COLUMN);
+        return $stmt !== null ? $stmt->fetchAll(PDO::FETCH_COLUMN) : [];
     }
 
     /**
@@ -131,6 +146,9 @@ class Db
     public function selectCell(string $query, ...$params): mixed
     {
         $stmt = $this->executeQuery($query, $params);
+        if ($stmt === null) {
+            return null;
+        }
         $result = $stmt->fetchColumn();
         return $result === false ? null : $result;
     }
@@ -154,7 +172,7 @@ class Db
     public function query(string $query, ...$params): int
     {
         $stmt = $this->executeQuery($query, $params);
-        return $stmt->rowCount();
+        return $stmt !== null ? $stmt->rowCount() : 0;
     }
 
     /**
@@ -162,6 +180,10 @@ class Db
      */
     public function insert(string $table, array $data): int|string
     {
+        if ($table === '') {
+            throw new SecureDbException('Table name cannot be empty');
+        }
+
         if (empty($data)) {
             throw new SecureDbException('Insert data cannot be empty');
         }
@@ -175,7 +197,9 @@ class Db
         
         $query = "INSERT INTO {$quotedTable} (" . implode(', ', $quotedColumns) . ") VALUES ({$placeholders})";
         
-        $this->executeQuery($query, $values);
+        if ($this->executeQuery($query, $values) === null) {
+            return 0; // Non-strict mode: query failed, no insert ID available
+        }
         
         return $this->pdo->lastInsertId();
     }
@@ -185,6 +209,10 @@ class Db
      */
     public function update(string $table, array $data, array $where): int
     {
+        if ($table === '') {
+            throw new SecureDbException('Table name cannot be empty');
+        }
+
         if (empty($data)) {
             throw new SecureDbException('Update data cannot be empty');
         }
@@ -215,7 +243,7 @@ class Db
         $params = array_merge($setValues, $whereValues);
         
         $stmt = $this->executeQuery($query, $params);
-        return $stmt->rowCount();
+        return $stmt !== null ? $stmt->rowCount() : 0;
     }
 
     /**
@@ -223,6 +251,10 @@ class Db
      */
     public function delete(string $table, array $where): int
     {
+        if ($table === '') {
+            throw new SecureDbException('Table name cannot be empty');
+        }
+
         if (empty($where)) {
             throw new SecureDbException('Delete WHERE clause cannot be empty');
         }
@@ -240,7 +272,7 @@ class Db
         $query = "DELETE FROM {$quotedTable} WHERE " . implode(' AND ', $whereParts);
         
         $stmt = $this->executeQuery($query, $whereValues);
-        return $stmt->rowCount();
+        return $stmt !== null ? $stmt->rowCount() : 0;
     }
 
     /**
@@ -285,9 +317,10 @@ class Db
     }
 
     /**
-     * Execute a query with prepared statements
+     * Execute a query with prepared statements.
+     * Returns null when strictMode is false and an error occurs.
      */
-    private function executeQuery(string $query, array $params): PDOStatement
+    private function executeQuery(string $query, array $params): PDOStatement|null
     {
         $startTime = microtime(true);
         
@@ -295,22 +328,21 @@ class Db
             // Process special placeholders
             [$processedQuery, $processedParams] = $this->placeholderProcessor->processQuery($query, $params);
             
-            // Log pre-execution
-            $this->logQuery($processedQuery, $processedParams, null, $startTime);
-            
             // Prepare and execute statement
             $stmt = $this->pdo->prepare($processedQuery);
             $stmt->execute($processedParams);
             
-            // Log post-execution
-            $executionTime = microtime(true) - $startTime;
-            $this->logQuery($processedQuery, $processedParams, $executionTime, $startTime);
+            // Log after successful execution
+            $this->logQuery($processedQuery, $processedParams, microtime(true) - $startTime, $startTime);
             
             return $stmt;
             
         } catch (PDOException $e) {
             $this->handleError($e, $query, $params);
-            throw new SecureDbException('Database query failed', (int)$e->getCode(), $e);
+            if ($this->strictMode) {
+                throw new SecureDbException('Database query failed', (int)$e->getCode(), $e);
+            }
+            return null;
         }
     }
 
@@ -339,16 +371,19 @@ class Db
     /**
      * Log query execution
      */
-    private function logQuery(string $query, array $params, ?float $executionTime, float $startTime): void
+    private function logQuery(string $query, array $params, float $executionTime, float $startTime): void
     {
         if ($this->logger) {
             $logData = [
                 'query' => $query,
-                'params' => $params,
                 'execution_time' => $executionTime,
                 'timestamp' => $startTime,
                 'caller' => $this->getCallerInfo(),
             ];
+
+            if ($this->logQueryParams) {
+                $logData['params'] = $params;
+            }
             
             ($this->logger)($logData);
         }
@@ -361,19 +396,25 @@ class Db
     {
         if ($this->logger) {
             $logData = [
+                'severity' => 'error',
                 'error' => $e->getMessage(),
+                'error_code' => $e->getCode(),
                 'query' => $query,
-                'params' => $params,
                 'timestamp' => microtime(true),
                 'caller' => $this->getCallerInfo(),
             ];
+
+            if ($this->logQueryParams) {
+                $logData['params'] = $params;
+            }
             
             ($this->logger)($logData);
         }
     }
 
     /**
-     * Get caller information for debugging
+     * Get caller information for debugging. Returns only the filename (not the full path)
+     * to avoid leaking server directory structure in logs.
      */
     private function getCallerInfo(): array
     {
@@ -383,7 +424,7 @@ class Db
         foreach ($trace as $frame) {
             if (!isset($frame['class']) || $frame['class'] !== self::class) {
                 return [
-                    'file' => $frame['file'] ?? 'unknown',
+                    'file' => isset($frame['file']) ? basename($frame['file']) : 'unknown',
                     'line' => $frame['line'] ?? 0,
                     'function' => $frame['function'] ?? 'unknown',
                 ];

@@ -234,8 +234,11 @@ $db->setLogger(function($logData) {
     ]));
 });
 
-// Strict mode (default: true)
-$db->setStrictMode(false); // Returns false instead of throwing exceptions
+// Enable parameter logging (opt-in — disabled by default to protect sensitive data)
+$db->setLogQueryParams(true);
+
+// Strict mode (default: true) — when false, returns safe defaults instead of throwing exceptions
+$db->setStrictMode(false); // select → [], selectRow/selectCell → null, query/update/delete/insert → 0
 ```
 
 ### TypedValue Integration
@@ -260,11 +263,9 @@ $userId = $db->insert('users', [
 |----------|-------------------|---------|
 | MySQL | Backticks (`) | ✅ Full Support |
 | PostgreSQL | Double quotes (") | ✅ Full Support |
-| SQLite | Smart quoting* | ✅ Full Support |
+| SQLite | Double quotes (") | ✅ Full Support |
 | SQL Server | Brackets ([]) | ✅ Basic Support |
 | Oracle | Double quotes (") | ✅ Basic Support |
-
-\* SQLite uses intelligent identifier quoting - simple identifiers are left unquoted for maximum compatibility, while complex identifiers use double quotes when needed.
 
 ## Security Features
 
@@ -299,17 +300,23 @@ $userId = $db->insert('users', [
 
 ### Audit Logging
 
+Query parameters are **excluded from logs by default** to prevent sensitive data (passwords, tokens, PII) from leaking into log files. Enable them explicitly only for debugging in non-production environments.
+
 ```php
 $db->setLogger(function($logData) {
-    // Log to security audit system
+    // Log to security audit system — params are NOT included unless setLogQueryParams(true)
     SecurityAudit::log([
         'query' => $logData['query'],
-        'params' => $logData['params'],
         'user_id' => getCurrentUserId(),
         'timestamp' => $logData['timestamp'],
         'caller' => $logData['caller']
     ]);
 });
+
+// Opt-in to logging parameters (e.g. in a development environment only)
+if ($isDev) {
+    $db->setLogQueryParams(true);
+}
 ```
 
 ## Testing
@@ -368,6 +375,17 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 If you discover any security vulnerabilities, please send an email to webtota@gmail.com instead of using the issue tracker.
 
 ## Changelog
+
+### 1.2.0
+- **Security:** `connect()` no longer includes PDO error details (DSN, credentials) in the exception message
+- **Security:** Query parameters are excluded from logs by default; opt-in via `setLogQueryParams(true)`
+- **Security:** `getCallerInfo()` now logs only the filename, not the full server filesystem path
+- **Fix:** `setStrictMode(false)` now works as documented — query methods return safe defaults (`[]`, `null`, `0`) instead of throwing on error
+- **Fix:** `insert()`, `update()`, `delete()` now throw immediately on an empty table name
+- **Fix:** SQLite identifier quoting unified to ANSI double-quotes (consistent with all other drivers); removed incomplete reserved-word detection
+- **Fix:** Removed duplicate pre-execution log entry — queries are now logged once, after execution, with accurate timing
+- `logError()` now includes `severity` and `error_code` fields
+- `SecureDbException` constructor now accepts `?\Throwable` as the previous exception (was `?Exception`)
 
 ### 1.1.0
 - Added macro substitution for conditional SQL blocks using `{ }` syntax

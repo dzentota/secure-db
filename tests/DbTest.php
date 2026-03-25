@@ -55,6 +55,17 @@ class DbTest extends TestCase
         Db::connect('invalid:dsn');
     }
 
+    public function testConnectErrorDoesNotLeakCredentials(): void
+    {
+        try {
+            Db::connect('mysql:host=localhost', 'secret_user', 'secret_password');
+            $this->fail('Expected SecureDbException was not thrown');
+        } catch (SecureDbException $e) {
+            $this->assertStringNotContainsString('secret_user', $e->getMessage());
+            $this->assertStringNotContainsString('secret_password', $e->getMessage());
+        }
+    }
+
     public function testWrap(): void
     {
         $pdo = new PDO('sqlite::memory:');
@@ -157,6 +168,30 @@ class DbTest extends TestCase
         $this->expectExceptionMessage('Insert data cannot be empty');
         
         $this->db->insert('users', []);
+    }
+
+    public function testInsertEmptyTableName(): void
+    {
+        $this->expectException(SecureDbException::class);
+        $this->expectExceptionMessage('Table name cannot be empty');
+
+        $this->db->insert('', ['name' => 'Test']);
+    }
+
+    public function testUpdateEmptyTableName(): void
+    {
+        $this->expectException(SecureDbException::class);
+        $this->expectExceptionMessage('Table name cannot be empty');
+
+        $this->db->update('', ['name' => 'Test'], ['id' => 1]);
+    }
+
+    public function testDeleteEmptyTableName(): void
+    {
+        $this->expectException(SecureDbException::class);
+        $this->expectExceptionMessage('Table name cannot be empty');
+
+        $this->db->delete('', ['id' => 1]);
     }
 
     public function testUpdate(): void
@@ -329,12 +364,28 @@ class DbTest extends TestCase
         $this->db->setLogger(function ($logData) use (&$logCalled) {
             $logCalled = true;
             $this->assertArrayHasKey('query', $logData);
-            $this->assertArrayHasKey('params', $logData);
+            // Params are excluded by default to prevent sensitive data leaking into logs
+            $this->assertArrayNotHasKey('params', $logData);
         });
         
         $this->db->select('SELECT * FROM users WHERE id = ?', 1);
         
         $this->assertTrue($logCalled);
+    }
+
+    public function testLoggerWithQueryParams(): void
+    {
+        $logData = null;
+        $this->db->setLogQueryParams(true);
+        $this->db->setLogger(function ($data) use (&$logData) {
+            $logData = $data;
+        });
+
+        $this->db->select('SELECT * FROM users WHERE id = ?', 1);
+
+        $this->assertNotNull($logData);
+        $this->assertArrayHasKey('params', $logData);
+        $this->assertSame([1], $logData['params']);
     }
 
     public function testStrictMode(): void
@@ -343,6 +394,38 @@ class DbTest extends TestCase
         
         $this->expectException(SecureDbException::class);
         $this->db->select('SELECT * FROM nonexistent_table');
+    }
+
+    public function testStrictModeDisabled(): void
+    {
+        $this->db->setStrictMode(false);
+
+        // select / selectRow — return empty collection / null
+        $rows = $this->db->select('SELECT * FROM nonexistent_table');
+        $this->assertSame([], $rows);
+
+        $row = $this->db->selectRow('SELECT * FROM nonexistent_table');
+        $this->assertNull($row);
+
+        // selectCol / selectCell
+        $col = $this->db->selectCol('SELECT name FROM nonexistent_table');
+        $this->assertSame([], $col);
+
+        $cell = $this->db->selectCell('SELECT COUNT(*) FROM nonexistent_table');
+        $this->assertNull($cell);
+
+        // write operations — return 0 affected rows
+        $affected = $this->db->query('DELETE FROM nonexistent_table WHERE id = ?', 1);
+        $this->assertSame(0, $affected);
+
+        $updated = $this->db->update('nonexistent_table', ['name' => 'x'], ['id' => 1]);
+        $this->assertSame(0, $updated);
+
+        $deleted = $this->db->delete('nonexistent_table', ['id' => 1]);
+        $this->assertSame(0, $deleted);
+
+        $inserted = $this->db->insert('nonexistent_table', ['name' => 'x']);
+        $this->assertSame(0, $inserted);
     }
 
     public function testSelectPage(): void
