@@ -58,7 +58,7 @@ class PlaceholderProcessor
                 
                 if ($placeholder === '?#') {
                     // Handle ?# identifier placeholders
-                    if (!isset($filteredParams[$paramIndex])) {
+                    if (!array_key_exists($paramIndex, $filteredParams)) {
                         throw new SecureDbException('Missing parameter for identifier placeholder ?#');
                     }
                     
@@ -73,7 +73,7 @@ class PlaceholderProcessor
                     
                 } elseif ($placeholder === '?a') {
                     // Handle ?a array placeholders
-                    if (!isset($filteredParams[$paramIndex])) {
+                    if (!array_key_exists($paramIndex, $filteredParams)) {
                         throw new SecureDbException('Missing parameter for array placeholder ?a');
                     }
                     
@@ -108,7 +108,7 @@ class PlaceholderProcessor
                     
                 } else {
                     // Handle regular ? placeholders  
-                    if (!isset($filteredParams[$paramIndex])) {
+                    if (!array_key_exists($paramIndex, $filteredParams)) {
                         throw new SecureDbException('Missing parameter for placeholder ?');
                     }
                     
@@ -176,7 +176,7 @@ class PlaceholderProcessor
                 
                 // Add parameters before this block to processed params
                 for ($i = $paramIndex - $placeholdersBeforeBlock; $i < $paramIndex; $i++) {
-                    if (isset($params[$i]) && !$this->isSkipValue($params[$i])) {
+                    if (array_key_exists($i, $params) && !$this->isSkipValue($params[$i])) {
                         $processedParams[] = $params[$i];
                     }
                 }
@@ -189,7 +189,7 @@ class PlaceholderProcessor
                 $blockParams = [];
                 
                 for ($i = 0; $i < $placeholderCount; $i++) {
-                    if (!isset($params[$paramIndex + $i])) {
+                    if (!array_key_exists($paramIndex + $i, $params)) {
                         // Not enough parameters - this will be caught later as an error
                         break;
                     }
@@ -227,7 +227,7 @@ class PlaceholderProcessor
         $remainingPlaceholders = $this->countPlaceholdersInBlock($remainingQuery);
         
         for ($i = 0; $i < $remainingPlaceholders; $i++) {
-            if (isset($params[$paramIndex + $i]) && !$this->isSkipValue($params[$paramIndex + $i])) {
+            if (array_key_exists($paramIndex + $i, $params) && !$this->isSkipValue($params[$paramIndex + $i])) {
                 $processedParams[] = $params[$paramIndex + $i];
             }
         }
