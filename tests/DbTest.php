@@ -576,4 +576,76 @@ class DbTest extends TestCase
     }
 
 
+
+    public function testInsertWithNullValue(): void
+    {
+        $id = $this->db->insert('users', ['name' => 'N', 'email' => 'n@x', 'age' => null]);
+        $this->assertNull($this->db->selectCell('SELECT age FROM users WHERE id = ?', $id));
+        $this->assertSame(1, (int)$this->db->selectCell('SELECT COUNT(*) FROM users WHERE id = ? AND age IS NULL', $id));
+    }
+
+    public function testQueryWithNullPlaceholder(): void
+    {
+        $this->assertSame(1, $this->db->query('UPDATE users SET age = ? WHERE id = ?', null, 1));
+        $this->assertNull($this->db->selectCell('SELECT age FROM users WHERE id = ?', 1));
+    }
+
+    public function testUpdateAndDeleteWithNull(): void
+    {
+        $this->assertSame(1, $this->db->update('users', ['age' => null], ['id' => 2]));
+        $this->assertNull($this->db->selectCell('SELECT age FROM users WHERE id = 2'));
+    }
+
+    public function testArrayAssocPlaceholderWithNull(): void
+    {
+        $this->db->query('UPDATE users SET ?a WHERE id = ?', ['age' => null, 'name' => 'Z'], 1);
+        $row = $this->db->selectRow('SELECT name, age FROM users WHERE id = 1');
+        $this->assertSame('Z', $row['name']);
+        $this->assertNull($row['age']);
+    }
+
+    public function testArrayListPlaceholderWithNullElementAndTrailingNull(): void
+    {
+        $rows = $this->db->selectCol('SELECT id FROM users WHERE id IN (?a) AND (? IS NULL)', [1, null, 2], null);
+        $this->assertEquals([1, 2], array_map('intval', $rows));
+    }
+
+    public function testNullInsideMacroBlockIsNotSkipped(): void
+    {
+        $this->db->query('UPDATE users SET age = ? WHERE id = 3', null);
+        $rows = $this->db->selectCol('SELECT id FROM users WHERE id > ? { AND (age IS ? OR age IS NULL) } ORDER BY id', 0, null);
+        $this->assertEquals([3], array_map('intval', $rows));
+        $rows = $this->db->selectCol('SELECT id FROM users WHERE id > ? { AND age = ? } AND ? IS NULL ORDER BY id', 0, MacroControl::SKIP, null);
+        $this->assertEquals([1, 2, 3], array_map('intval', $rows));
+    }
+
+    public function testMissingParameterStillThrows(): void
+    {
+        $this->expectException(SecureDbException::class);
+        $this->db->select('SELECT * FROM users WHERE id = ? AND age = ?', 1);
+    }
+
+    public function testHelpersApplyPrefixToPrefixPlaceholderTable(): void
+    {
+        $this->pdo->exec('CREATE TABLE app_posts (id INTEGER PRIMARY KEY, title TEXT)');
+        $this->db->setIdentifierPrefix('app_');
+        $id = $this->db->insert('?_posts', ['title' => 'a']);
+        $this->assertSame(1, $this->db->update('?_posts', ['title' => 'b'], ['id' => $id]));
+        $this->assertSame('b', $this->db->selectCell('SELECT title FROM ?_posts WHERE id = ?', $id));
+        $this->assertSame(1, $this->db->delete('?_posts', ['id' => $id]));
+        $this->assertSame(0, (int)$this->pdo->query('SELECT COUNT(*) FROM app_posts')->fetchColumn());
+    }
+
+    public function testHelpersKeepBareTableNamesVerbatimWithPrefix(): void
+    {
+        $this->db->setIdentifierPrefix('app_');
+        $id = $this->db->insert('users', ['name' => 'B', 'email' => 'b@x']);
+        $this->assertNotEmpty($id);
+    }
+
+    public function testInvalidPrefixedTableNameRejected(): void
+    {
+        $this->expectException(SecureDbException::class);
+        $this->db->insert('?_bad name', ['x' => 1]);
+    }
 } 

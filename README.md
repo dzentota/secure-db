@@ -166,7 +166,23 @@ $data = $db->select('SELECT ?#.* FROM ?#', 'u.name', 'users u');
 $db->setIdentifierPrefix('app_');
 $users = $db->select('SELECT * FROM ?_users WHERE ?_users.active = ?', 1);
 // Generates: SELECT * FROM `app_users` WHERE `app_users`.`active` = ?
+
+// Helpers (insert/update/delete) accept the same "?_name" form
+$db->insert('?_users', ['name' => 'Ann']);        // INSERT INTO `app_users` ...
+$db->update('?_users', ['name' => 'B'], ['id' => 1]);
+$db->delete('?_users', ['id' => 1]);
+// Bare names are still used verbatim (no prefix), for backward compatibility
+$db->insert('users', [...]);                       // INSERT INTO `users` ...
 ```
+
+#### NULL values
+
+`null` is a valid parameter for `?`, inside `?a` lists/assoc arrays, and in
+helpers: it binds as SQL `NULL` (`['age' => null]` in `?a` SET form produces
+`` `age` = ? `` with NULL bound). Note that SQL comparisons with NULL are never
+true: `col = ?` with NULL and `col IN (NULL, ...)` will not match NULL rows; use
+`IS NULL` explicitly. `null` inside a `{ ... }` block does not skip the block;
+only `MacroControl::SKIP` does.
 
 ### Macro Substitution (Conditional SQL Blocks)
 
