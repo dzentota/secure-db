@@ -17,6 +17,7 @@ class Db
 {
     private PDO $pdo;
     private IdentifierQuoter $quoter;
+    private string $identifierPrefix = '';
     private PlaceholderProcessor $placeholderProcessor;
     private mixed $errorHandler = null;
     private mixed $logger = null;
@@ -98,6 +99,7 @@ class Db
      */
     public function setIdentifierPrefix(string $prefix): void
     {
+        $this->identifierPrefix = $prefix;
         $this->placeholderProcessor->setIdentifierPrefix($prefix);
     }
 
@@ -191,7 +193,7 @@ class Db
         $columns = array_keys($data);
         $values = array_values($data);
         
-        $quotedTable = $this->quoter->quoteIdentifier($table);
+        $quotedTable = $this->quoteTableName($table);
         $quotedColumns = $this->quoter->quoteIdentifiers($columns);
         $placeholders = str_repeat('?,', count($values) - 1) . '?';
         
@@ -221,7 +223,7 @@ class Db
             throw new SecureDbException('Update WHERE clause cannot be empty');
         }
 
-        $quotedTable = $this->quoter->quoteIdentifier($table);
+        $quotedTable = $this->quoteTableName($table);
         
         // Build SET clause
         $setParts = [];
@@ -259,7 +261,7 @@ class Db
             throw new SecureDbException('Delete WHERE clause cannot be empty');
         }
 
-        $quotedTable = $this->quoter->quoteIdentifier($table);
+        $quotedTable = $this->quoteTableName($table);
         
         // Build WHERE clause
         $whereParts = [];
@@ -273,6 +275,24 @@ class Db
         
         $stmt = $this->executeQuery($query, $whereValues);
         return $stmt !== null ? $stmt->rowCount() : 0;
+    }
+
+    /**
+     * Quote a table name for the insert/update/delete helpers.
+     * A name written as "?_name" gets the identifier prefix applied (same as the
+     * ?_ placeholder in raw queries); any other name is quoted verbatim.
+     */
+    private function quoteTableName(string $table): string
+    {
+        if (str_starts_with($table, '?_')) {
+            $name = substr($table, 2);
+            if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $name)) {
+                throw new SecureDbException('Invalid prefixed table name');
+            }
+            return $this->quoter->quoteIdentifier($this->identifierPrefix . $name);
+        }
+
+        return $this->quoter->quoteIdentifier($table);
     }
 
     /**
